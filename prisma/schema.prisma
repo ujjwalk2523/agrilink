@@ -1,0 +1,484 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  FARMER
+  BUYER
+  TRANSPORTER
+  FPO
+  ADMIN
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum QualityGrade {
+  GRADE_A
+  GRADE_B
+  GRADE_C
+  ORGANIC
+}
+
+enum ListingStatus {
+  DRAFT
+  ACTIVE
+  HAS_OFFERS
+  NEGOTIATING
+  SOLD
+  COMPLETED
+  CANCELLED
+}
+
+enum OfferStatus {
+  PENDING
+  COUNTERED
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  CANCELLED
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  TRANSPORT_PENDING
+  PICKUP_SCHEDULED
+  PICKED_UP
+  IN_TRANSIT
+  DELIVERED
+  QUALITY_CHECK
+  PAYMENT_PENDING
+  COMPLETED
+  CANCELLED
+  DISPUTED
+}
+
+enum TransportResponsibility {
+  BUYER_ARRANGES
+  FARMER_ARRANGES
+  PLATFORM_TRANSPORTER
+}
+
+enum PaymentTerms {
+  INSTANT_ESCROW
+  DELIVERY_50_50
+  POST_INSPECTION_24H
+  CREDIT_7_DAYS
+}
+
+model User {
+  id                 String              @id @default(cuid())
+  email              String              @unique
+  phone              String?             @unique
+  passwordHash       String?
+  name               String
+  role               Role                @default(FARMER)
+  avatar             String?
+  verificationStatus VerificationStatus  @default(UNVERIFIED)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  farmerProfile      FarmerProfile?
+  buyerProfile       BuyerProfile?
+  transporterProfile TransporterProfile?
+  fpoProfile         FpoProfile?
+  
+  notifications      Notification[]
+  auditLogs          AuditLog[]
+  reviewsGiven       Review[]            @relation("ReviewAuthor")
+  reviewsReceived    Review[]            @relation("ReviewTarget")
+  sentMessages       OfferMessage[]
+}
+
+model FarmerProfile {
+  id             String         @id @default(cuid())
+  userId         String         @unique
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  state          String
+  district       String
+  taluka         String?
+  village        String?
+  pincode        String
+  latitude       Float
+  longitude      Float
+  aadhaarMasked  String?
+  kisanCreditCard Boolean       @default(false)
+  totalLandAcres Float          @default(0)
+  farms          Farm[]
+  produceListings ProduceListing[]
+  fpoMembershipId String?
+  fpo            FpoProfile?    @relation(fields: [fpoMembershipId], references: [id])
+}
+
+model BuyerProfile {
+  id               String         @id @default(cuid())
+  userId           String         @unique
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyName      String?
+  businessType     String         @default("Wholesaler") // Wholesaler, Retailer, Exporter, Processor
+  gstNumber        String?
+  panNumber        String?
+  creditRating     Float          @default(4.8)
+  reliabilityScore Float          @default(95.0) // percentage
+  state            String
+  city             String
+  pincode          String
+  latitude         Float
+  longitude        Float
+  offers           BuyerOffer[]
+  orders           Order[]
+}
+
+model TransporterProfile {
+  id               String            @id @default(cuid())
+  userId           String            @unique
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyName      String?
+  licenseNumber    String?
+  baseCity         String
+  baseState        String
+  latitude         Float
+  longitude        Float
+  operatingRadiusKm Float            @default(300)
+  rating           Float             @default(4.7)
+  isAvailable      Boolean           @default(true)
+  vehicles         Vehicle[]
+  transportQuotes  TransportQuote[]
+  deliveries       Delivery[]
+}
+
+model FpoProfile {
+  id               String          @id @default(cuid())
+  userId           String          @unique
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fpoName          String
+  registrationNo   String?
+  memberCount      Int             @default(0)
+  headOfficeCity   String
+  state            String
+  latitude         Float
+  longitude        Float
+  farmerMembers    FarmerProfile[]
+  bulkListings     ProduceListing[]
+}
+
+model Farm {
+  id              String        @id @default(cuid())
+  farmerProfileId String
+  farmerProfile   FarmerProfile @relation(fields: [farmerProfileId], references: [id], onDelete: Cascade)
+  name            String
+  areaAcres       Float
+  soilType        String?
+  irrigationType  String?
+  primaryCrops    String?
+}
+
+model Crop {
+  id                   String        @id @default(cuid())
+  name                 String        @unique // Tomato, Onion, Potato, Wheat, etc.
+  category             String        // Vegetables, Grains, Fruits, Spices, Oilseeds
+  unit                 String        @default("Quintal") // Quintal (100kg), MT (1000kg), Kg
+  icon                 String?
+  perishabilityIndex   Float         @default(0.5) // 0.1 (grain) to 0.9 (perishable berry/tomato)
+  shelfLifeHours       Int           @default(72)
+  optimalTempCelsius   Float?
+  varieties            CropVariety[]
+  marketPrices         MarketPrice[]
+  produceListings      ProduceListing[]
+  pricePredictions     PricePrediction[]
+}
+
+model CropVariety {
+  id             String          @id @default(cuid())
+  cropId         String
+  crop           Crop            @relation(fields: [cropId], references: [id], onDelete: Cascade)
+  name           String          // e.g. "Hybrid 1057", "Nasik Red", "Sharbati"
+  characteristics String?
+  marketPrices   MarketPrice[]
+  produceListings ProduceListing[]
+}
+
+model Market {
+  id               String        @id @default(cuid())
+  name             String        // e.g. "Azadpur APMC Mandi", "Lasalgaon Mandi", "Vashi APMC"
+  marketType       String        @default("APMC") // APMC, PRIVATE_COLLECTION_HUB, EXPORT_TERMINAL
+  state            String
+  district         String
+  city             String
+  latitude         Float
+  longitude        Float
+  mandiCessPercent Float         @default(1.5) // % of gross sale
+  commissionPercent Float        @default(2.5) // Commission agent charge %
+  unloadingRatePerUnit Float     @default(15.0) // Per quintal handling fee
+  dailyVolumeMetric Float        @default(450.0) // Metric tons daily trade
+  liquidityScore   Float         @default(90.0) // 1-100 score
+  isActive         Boolean       @default(true)
+  marketPrices     MarketPrice[]
+}
+
+model MarketPrice {
+  id                 String       @id @default(cuid())
+  marketId           String
+  market             Market       @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  cropId             String
+  crop               Crop         @relation(fields: [cropId], references: [id], onDelete: Cascade)
+  varietyId          String?
+  variety            CropVariety? @relation(fields: [varietyId], references: [id])
+  qualityGrade       QualityGrade @default(GRADE_A)
+  minPrice           Float        // Price in INR per unit
+  maxPrice           Float
+  modalPrice         Float        // Most common trading price
+  priceTrend         String       @default("STABLE") // BULLISH, BEARISH, STABLE
+  dailyArrivalUnits  Float        @default(100.0) // Volume arrived today
+  dataSource         String       @default("Agmarknet/eNAM API")
+  sourceTimestamp    DateTime     @default(now())
+  lastSyncedAt       DateTime     @default(now())
+  dataFreshness      String       @default("FRESH") // FRESH (<6h), RECENT (<24h), STALE
+  createdAt          DateTime     @default(now())
+}
+
+model ProduceListing {
+  id                 String          @id @default(cuid())
+  farmerProfileId    String?
+  farmerProfile      FarmerProfile?  @relation(fields: [farmerProfileId], references: [id], onDelete: Cascade)
+  fpoProfileId       String?
+  fpoProfile         FpoProfile?     @relation(fields: [fpoProfileId], references: [id], onDelete: Cascade)
+  cropId             String
+  crop               Crop            @relation(fields: [cropId], references: [id])
+  varietyId          String?
+  variety            CropVariety?    @relation(fields: [varietyId], references: [id])
+  qualityGrade       QualityGrade    @default(GRADE_A)
+  quantity           Float
+  unit               String          @default("Quintal")
+  expectedPricePerUnit Float
+  minimumAcceptablePrice Float?
+  locationName       String
+  latitude           Float
+  longitude          Float
+  harvestDate        DateTime?
+  availableFrom      DateTime        @default(now())
+  status             ListingStatus   @default(ACTIVE)
+  description        String?
+  images             ListingImage[]
+  offers             BuyerOffer[]
+  orders             Order[]
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+}
+
+model ListingImage {
+  id         String         @id @default(cuid())
+  listingId  String
+  listing    ProduceListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  url        String
+  isPrimary  Boolean        @default(false)
+}
+
+model BuyerOffer {
+  id                    String                 @id @default(cuid())
+  listingId             String
+  listing               ProduceListing         @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  buyerProfileId        String
+  buyerProfile          BuyerProfile           @relation(fields: [buyerProfileId], references: [id], onDelete: Cascade)
+  offeredPricePerUnit   Float
+  quantity              Float
+  pickupDate            DateTime
+  paymentTerms          PaymentTerms           @default(INSTANT_ESCROW)
+  transportResponsibility TransportResponsibility @default(BUYER_ARRANGES)
+  notes                 String?
+  counterPricePerUnit   Float?
+  status                OfferStatus            @default(PENDING)
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  messages              OfferMessage[]
+  order                 Order?
+}
+
+model OfferMessage {
+  id        String     @id @default(cuid())
+  offerId   String
+  offer     BuyerOffer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  senderId  String
+  sender    User       @relation(fields: [senderId], references: [id])
+  message   String
+  createdAt DateTime   @default(now())
+}
+
+model Order {
+  id                     String           @id @default(cuid())
+  orderNumber            String           @unique
+  listingId              String
+  listing                ProduceListing   @relation(fields: [listingId], references: [id])
+  buyerProfileId         String
+  buyerProfile           BuyerProfile     @relation(fields: [buyerProfileId], references: [id])
+  buyerOfferId           String?          @unique
+  buyerOffer             BuyerOffer?      @relation(fields: [buyerOfferId], references: [id])
+  agreedPricePerUnit     Float
+  quantity               Float
+  totalAmount            Float
+  escrowAmount           Float            @default(0)
+  status                 OrderStatus      @default(CONFIRMED)
+  transportResponsibility TransportResponsibility @default(BUYER_ARRANGES)
+  pickupAddress          String
+  deliveryAddress        String
+  deliveryLatitude       Float
+  deliveryLongitude      Float
+  pickupDate             DateTime
+  deliveryDate           DateTime?
+  transportRequests      TransportRequest[]
+  delivery               Delivery?
+  payments               Payment[]
+  reviews                Review[]
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+}
+
+model Vehicle {
+  id                   String             @id @default(cuid())
+  transporterProfileId String
+  transporterProfile   TransporterProfile @relation(fields: [transporterProfileId], references: [id], onDelete: Cascade)
+  vehicleType          String             // Tata Ace, 14-Ft Eicher, 32-Ft Multi-Axle, Reefer Truck
+  registrationNumber   String             @unique
+  capacityMetricTons   Float
+  hasRefrigeration     Boolean            @default(false)
+  isAvailable          Boolean            @default(true)
+  ratePerKmPerTon      Float              @default(3.5)
+}
+
+model TransportRequest {
+  id               String           @id @default(cuid())
+  orderId          String
+  order            Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  originCity       String
+  originLat        Float
+  originLng        Float
+  destCity         String
+  destLat          Float
+  destLng          Float
+  cargoWeightTons  Float
+  cropName         String
+  requiresReefer   Boolean          @default(false)
+  pickupDeadline   DateTime
+  status           String           @default("OPEN") // OPEN, ASSIGNED, COMPLETED, CANCELLED
+  quotes           TransportQuote[]
+  createdAt        DateTime         @default(now())
+}
+
+model TransportQuote {
+  id                   String             @id @default(cuid())
+  requestId            String
+  request              TransportRequest   @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  transporterProfileId String
+  transporterProfile   TransporterProfile @relation(fields: [transporterProfileId], references: [id], onDelete: Cascade)
+  quotedAmount         Float
+  estimatedPickup      DateTime
+  notes                String?
+  isAccepted           Boolean            @default(false)
+  createdAt            DateTime           @default(now())
+}
+
+model Delivery {
+  id                   String             @id @default(cuid())
+  orderId              String             @unique
+  order                Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  transporterProfileId String?
+  transporterProfile   TransporterProfile? @relation(fields: [transporterProfileId], references: [id])
+  driverName           String?
+  driverPhone          String?
+  vehicleNumber        String?
+  currentLat           Float?
+  currentLng           Float?
+  currentStatus        String             @default("PICKUP_SCHEDULED")
+  pickupTime           DateTime?
+  deliveredTime        DateTime?
+  proofOfDeliveryUrl   String?
+  notes                String?
+  updatedAt            DateTime           @updatedAt
+}
+
+model Payment {
+  id              String      @id @default(cuid())
+  orderId         String
+  order           Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  amount          Float
+  paymentType     String      // ESCROW_DEPOSIT, FARMER_PAYOUT, TRANSPORT_FEE, PLATFORM_FEE
+  paymentStatus   String      @default("COMPLETED") // PENDING, ESCROWED, RELEASED, REFUNDED
+  paymentMethod   String      @default("UPI/NEFT Bank Transfer")
+  transactionRef  String?
+  paidAt          DateTime    @default(now())
+}
+
+model Review {
+  id           String   @id @default(cuid())
+  orderId      String
+  order        Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  authorId     String
+  author       User     @relation("ReviewAuthor", fields: [authorId], references: [id])
+  targetUserId String
+  targetUser   User     @relation("ReviewTarget", fields: [targetUserId], references: [id])
+  rating       Int      // 1 to 5
+  comment      String?
+  createdAt    DateTime @default(now())
+}
+
+model Notification {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title      String
+  message    String
+  type       String   // PRICE_ALERT, NEW_OFFER, ORDER_STATUS, PAYMENT_UPDATE, TRIP_UPDATE
+  actionUrl  String?
+  isRead     Boolean  @default(false)
+  channel    String   @default("IN_APP") // IN_APP, SMS, WHATSAPP, EMAIL
+  createdAt  DateTime @default(now())
+}
+
+model PricePrediction {
+  id           String   @id @default(cuid())
+  cropId       String
+  crop         Crop     @relation(fields: [cropId], references: [id], onDelete: Cascade)
+  marketName   String
+  forecastDate DateTime
+  expectedPrice Float
+  confidenceMin Float
+  confidenceMax Float
+  trendSignal  String   // BULLISH_STRONG, BULLISH_MODERATE, STABLE, BEARISH
+  reasoning    String
+  createdAt    DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String   // USER_LOGIN, LISTING_CREATED, OFFER_ACCEPTED, PRICE_UPDATED, KYC_VERIFIED
+  entityType String
+  entityId  String?
+  ipAddress String?
+  details   String?
+  createdAt DateTime @default(now())
+}
+
+model AiRecommendation {
+  id               String   @id @default(cuid())
+  farmerLocation   String
+  cropName         String
+  quantity         Float
+  recommendedMarket String
+  estimatedNetINR  Float
+  score            Float
+  reasoning        String
+  actionPayload    String?
+  createdAt        DateTime @default(now())
+}
